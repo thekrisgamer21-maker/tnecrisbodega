@@ -1,0 +1,1615 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Administrador de Sobres con Código de Barra (v8)</title>
+    <!-- Tailwind CSS para diseño moderno -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Librerías de Firebase en versión COMPAT (Evita bloqueos de CORS en archivos locales file://) -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+    <!-- Librería para escaneo por cámara -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+    <style>
+        :root {
+            --primary-color: #2b4c7e;
+            --primary-hover: #1a3052;
+            --secondary-color: #4a5568;
+            --secondary-hover: #2d3748;
+            --accent-color: #2a9d8f;
+            --bg-color: #f4f6f9;
+            --card-bg: #ffffff;
+            --text-color: #333333;
+            --text-muted: #666666;
+            --border-color: #e0e0e0;
+            --success-bg: #e8f5e9;
+            --success-color: #2e7d32;
+            --delivery-color: #10b981;
+            --delivery-bg: #ecfdf5;
+            --returned-color: #f97316;
+            --returned-bg: #ffedd5;
+            --danger-color: #e63946;
+            --danger-hover: #c1121f;
+            --warning-bg: #fff3cd;
+            --warning-color: #856404;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+        }
+
+        /* --- ESTILOS DE ESTADO EN TABLA --- */
+        .row-checked {
+            background-color: var(--success-bg) !important;
+            color: var(--success-color);
+        }
+
+        .row-delivered {
+            background-color: var(--delivery-bg) !important;
+            color: #065f46 !important;
+            border-left: 4px solid var(--delivery-color);
+        }
+
+        .row-returned {
+            background-color: var(--returned-bg) !important;
+            color: #9a3412 !important;
+            border-left: 4px solid var(--returned-color);
+        }
+
+        .row-checked .editable-cell {
+            text-decoration: line-through;
+            opacity: 0.8;
+        }
+
+        .row-delivered .editable-cell {
+            text-decoration: line-through;
+            opacity: 0.7;
+        }
+
+        .row-returned .editable-cell {
+            text-decoration: line-through;
+            opacity: 0.8;
+        }
+
+        /* --- CELDAS EDITABLES --- */
+        .editable-cell {
+            padding: 6px;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            transition: all 0.2s;
+            cursor: pointer;
+            min-width: 100px;
+            word-break: break-all;
+        }
+
+        .editable-cell:hover {
+            background-color: #f1f5f9;
+            border-color: #cbd5e1;
+        }
+
+        .editable-cell:focus {
+            background-color: #ffffff;
+            border-color: var(--primary-color);
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(43, 76, 126, 0.1);
+        }
+
+        .input-qty-table {
+            width: 65px;
+            padding: 5px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            text-align: center;
+            font-weight: bold;
+            color: #1e293b;
+        }
+
+        /* --- COMPONENTE DE ALMACENAMIENTO POR RUTA --- */
+        .storage-route-card {
+            margin-bottom: 12px;
+            padding: 12px;
+            border-radius: 8px;
+            background-color: #f8f9fa;
+            border-left: 4px solid var(--primary-color);
+            transition: all 0.2s ease;
+        }
+
+        .storage-route-header {
+            font-weight: bold;
+            font-size: 13px;
+            color: var(--primary-color);
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .route-progress-lbl {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 4px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .route-progress-bar-container {
+            width: 100%;
+            background-color: rgba(0, 0, 0, 0.08);
+            height: 5px;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 2px;
+            margin-bottom: 6px;
+        }
+
+        .route-progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            background-color: var(--accent-color);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
+        .storage-items-list {
+            list-style-type: none;
+            padding-left: 5px;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+
+        .storage-item-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            border-bottom: 1px dashed #e2e8f0;
+        }
+
+        /* --- COMPONENTE DE BITÁCORA / LOG --- */
+        .log-item {
+            display: flex;
+            gap: 10px;
+            font-size: 12px;
+            padding: 6px 8px;
+            border-radius: 4px;
+            background-color: #f8f9fa;
+            border-left: 3px solid var(--primary-color);
+        }
+
+        .log-time {
+            font-weight: bold;
+            color: var(--primary-color);
+            min-width: 55px;
+        }
+
+        .log-text {
+            color: var(--text-color);
+            word-break: break-all;
+        }
+
+        /* --- VENTANA MODAL PERSONALIZADA --- */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background-color: var(--card-bg);
+            padding: 24px;
+            border-radius: 12px;
+            max-width: 450px;
+            width: 90%;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+
+        /* --- ESTILOS EXCLUSIVOS PARA IMPRESIÓN LIMPIA --- */
+        @media print {
+            body {
+                background-color: #ffffff !important;
+                color: #000000 !important;
+                padding: 0 !important;
+            }
+            .no-print, .left-column, #cloud-status-badge {
+                display: none !important;
+            }
+            .main-content {
+                grid-template-columns: 1fr !important;
+            }
+            .card {
+                box-shadow: none !important;
+                border: none !important;
+                padding: 0 !important;
+            }
+            header {
+                background-color: #ffffff !important;
+                color: #000000 !important;
+                border-bottom: 2px solid #000000;
+                border-radius: 0 !important;
+                box-shadow: none !important;
+                padding: 10px 0 !important;
+            }
+            header p, .stat-label {
+                color: #333333 !important;
+            }
+            .stat-card {
+                background: none !important;
+                border: 1px solid #ccc !important;
+                color: #000000 !important;
+            }
+            .progress-section {
+                border: 1px solid #ccc !important;
+                background: none !important;
+                color: #000000 !important;
+            }
+            .progress-container-bar {
+                background-color: #e2e8f0 !important;
+                border: 1px solid #999 !important;
+            }
+            .progress-bar-fill {
+                background: #666 !important;
+            }
+            table {
+                font-size: 11px !important;
+            }
+            th {
+                background-color: #eaedf2 !important;
+                color: #000000 !important;
+                border-bottom: 2px solid #000000 !important;
+            }
+            td {
+                border-bottom: 1px solid #999999 !important;
+            }
+            .input-qty-table {
+                border: none !important;
+                background: transparent !important;
+                font-size: 12px !important;
+            }
+            .editable-cell {
+                border: none !important;
+                background: transparent !important;
+            }
+            .row-checked {
+                background-color: #f2f2f2 !important;
+                color: #555555 !important;
+            }
+            .row-delivered {
+                background-color: #e8e8e8 !important;
+                color: #000000 !important;
+                border-left: 4px solid #000 !important;
+            }
+            .row-returned {
+                background-color: #fce8e6 !important;
+                color: #000000 !important;
+                border-left: 4px solid #f97316 !important;
+            }
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+<div class="container mx-auto max-w-7xl flex flex-col gap-6">
+    <header class="rounded-xl p-6 flex flex-col gap-5 text-white bg-[#2b4c7e] shadow-md">
+        <div class="header-top flex justify-between items-center flex-wrap gap-4">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-semibold">Administrador de Sobres</h1>
+                <p class="text-sm opacity-80">Control de inventario, entregas y devoluciones por código de barra (v8)</p>
+            </div>
+            <div id="cloud-status-badge" class="no-print bg-[#4a5568] px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-2">
+                ⚪ Modo Local
+            </div>
+            <div class="stats-container flex flex-wrap gap-3 flex-grow md:flex-grow-0 justify-around">
+                <div class="stat-card bg-white/15 p-3 rounded-md text-center min-w-[80px]">
+                    <span class="stat-value text-lg md:text-xl font-bold block" id="stat-unique">0</span>
+                    <span class="stat-label text-[10px] uppercase opacity-90">Sobres</span>
+                </div>
+                <div class="stat-card bg-white/15 p-3 rounded-md text-center min-w-[80px]">
+                    <span class="stat-value text-lg md:text-xl font-bold block" id="stat-total-qty">0</span>
+                    <span class="stat-label text-[10px] uppercase opacity-90">Cant. Total</span>
+                </div>
+                <div class="stat-card bg-white/15 p-3 rounded-md text-center min-w-[80px]">
+                    <span class="stat-value text-lg md:text-xl font-bold block" id="stat-checked">0</span>
+                    <span class="stat-label text-[10px] uppercase opacity-90">Listos</span>
+                </div>
+                <div class="stat-card bg-[#10b981]/25 p-3 rounded-md text-center min-w-[80px]">
+                    <span class="stat-value text-lg md:text-xl font-bold text-emerald-300 block" id="stat-delivered">0</span>
+                    <span class="stat-label text-[10px] uppercase font-bold text-emerald-200">Entregados</span>
+                </div>
+                <div class="stat-card bg-[#f97316]/25 p-3 rounded-md text-center min-w-[80px]">
+                    <span class="stat-value text-lg md:text-xl font-bold text-orange-300 block" id="stat-returned">0</span>
+                    <span class="stat-label text-[10px] uppercase font-bold text-orange-200">Devueltos</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="progress-section bg-black/15 p-4 rounded-lg">
+            <div class="progress-grid grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <div class="progress-info flex justify-between text-sm font-medium">
+                        <span>📦 Preparados para Despacho (Listos):</span>
+                        <span id="progress-percentage">0%</span>
+                    </div>
+                    <div class="progress-container-bar w-full h-2.5 bg-white/20 rounded-full overflow-hidden mt-1">
+                        <div class="progress-bar-fill h-full rounded-full transition-all duration-300 bg-gradient-to-r from-[#2a9d8f] to-[#1b4d3e]" id="progress-fill"></div>
+                    </div>
+                    <span id="progress-status-text" class="text-[11px] opacity-90 block mt-1">0 de 0 sobres</span>
+                </div>
+                <div>
+                    <div class="progress-info flex justify-between text-sm font-medium">
+                        <span>🚚 Entregas Confirmadas (Destino):</span>
+                        <span id="progress-delivery-percentage" class="text-emerald-300">0%</span>
+                    </div>
+                    <div class="progress-container-bar w-full h-2.5 bg-white/20 rounded-full overflow-hidden mt-1">
+                        <div class="progress-bar-fill h-full rounded-full transition-all duration-300 bg-gradient-to-r from-[#10b981] to-[#047857]" id="progress-delivery-fill"></div>
+                    </div>
+                    <span id="progress-delivery-status-text" class="text-[11px] opacity-90 block mt-1">0 de 0 sobres</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div class="main-content grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="left-column lg:col-span-1 flex flex-col gap-6">
+            <!-- CONEXIÓN MULTICOMPAÑÍA (NUBE) -->
+            <div class="card no-print bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                <h2 class="text-lg font-semibold text-[#2b4c7e] border-b-2 border-slate-100 pb-2 mb-3">📡 Conexión Multicompañía (Nube)</h2>
+                <p class="text-xs text-slate-500 mb-3">
+                    Comparte el inventario en tiempo real con otra sucursal, proveedor o socio logístico. Ambos deben escribir el mismo código de canal.
+                </p>
+                <div class="form-group flex gap-2">
+                    <input type="text" id="channel-id-input" class="form-control w-full p-2 border border-slate-300 rounded-lg text-sm" style="text-transform: uppercase;" placeholder="Escribe el nombre del canal">
+                    <button type="button" class="btn bg-[#2a9d8f] hover:bg-[#1f7369] transition-colors px-4 py-2 text-white font-medium rounded-lg text-sm" onclick="changeChannel()">Vincular</button>
+                </div>
+                <div id="cloud-info-status" class="text-xs text-slate-600 mt-2">
+                    Estado: <strong>Modo Local Offline</strong>
+                </div>
+            </div>
+
+            <!-- FORMULARIO DE INGRESO -->
+            <div class="card no-print bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                <h2 class="text-lg font-semibold text-[#2b4c7e] border-b-2 border-slate-100 pb-2 mb-3">Ingreso de Sobres</h2>
+                
+                <div class="internal-tabs flex bg-[#f1f5f9] p-1 rounded-lg gap-1 mb-4">
+                    <button type="button" class="tab-btn flex-1 py-1.5 text-xs font-semibold rounded-md active" id="form-tab-single" onclick="toggleFormMode('single')">
+                        📥 Individual
+                    </button>
+                    <button type="button" class="tab-btn flex-1 py-1.5 text-xs font-semibold rounded-md" id="form-tab-bulk" onclick="toggleFormMode('bulk')">
+                        ⚡ Masivo
+                    </button>
+                    <button type="button" class="tab-btn flex-1 py-1.5 text-xs font-semibold rounded-md" id="form-tab-camera" onclick="toggleFormMode('camera')">
+                        📷 Cámara
+                    </button>
+                </div>
+
+                <form id="envelope-form" autocomplete="off">
+                    <div id="single-form-fields">
+                        <div class="form-group mb-3">
+                            <label class="block text-xs font-bold text-slate-600 mb-1" for="barcode">Código de Barra</label>
+                            <input type="text" id="barcode" class="form-control w-full p-2 border border-slate-300 rounded-lg text-sm" placeholder="Escanee o digite el código">
+                            <div class="scanner-tip text-teal-600 mt-1 text-[11px]">
+                                <span>💡</span> El lector físico sumará automáticamente al escanear.
+                            </div>
+                        </div>
+                        <div class="form-group mb-3">
+                            <label class="block text-xs font-bold text-slate-600 mb-1" for="acta">Número de Acta</label>
+                            <input type="text" id="acta" class="form-control w-full p-2 border border-slate-300 rounded-lg text-sm" placeholder="Ej. ACTA-2026-001">
+                        </div>
+                        <div class="form-group mb-3">
+                            <label class="block text-xs font-bold text-slate-600 mb-1" for="conductor">Conductor</label>
+                            <input type="text" id="conductor" class="form-control w-full p-2 border border-slate-300 rounded-lg text-sm" placeholder="Ej. Juan Pérez">
+                        </div>
+                        <div class="form-group mb-3">
+                            <label class="block text-xs font-bold text-slate-600 mb-1" for="ruta">Ruta</label>
+                            <input type="text" id="ruta" class="form-control w-full p-2 border border-slate-300 rounded-lg text-sm" placeholder="Ej. Ruta Norte">
+                        </div>
+                        <div class="form-group mb-4">
+                            <label class="block text-xs font-bold text-slate-600 mb-1" for="quantity">Cantidad</label>
+                            <input type="number" id="quantity" class="form-control w-full p-2 border border-slate-300 rounded-lg text-sm" value="1" min="1">
+                        </div>
+                        <button type="submit" class="btn w-full bg-[#2b4c7e] hover:bg-[#1a3052] transition-all text-white p-2.5 rounded-lg font-semibold text-sm">Agregar / Incrementar</button>
+                    </div>
+                </form>
+
+                <div id="bulk-form-fields" style="display: none;">
+                    <div class="form-group mb-3">
+                        <label class="block text-xs font-bold text-slate-600 mb-1" for="bulk-barcodes">Escanear Códigos (Uno por línea o con comas)</label>
+                        <textarea id="bulk-barcodes" class="form-control w-full p-2 border border-slate-300 rounded-lg text-sm" rows="5" placeholder="Escanee seguidamente sus códigos aquí...&#10;SOBRE01&#10;SOBRE02&#10;SOBRE03"></textarea>
+                    </div>
+                    <div class="form-group mb-3">
+                        <label class="block text-xs font-bold text-slate-600 mb-1" for="bulk-acta">Número de Acta del Lote</label>
+                        <input type="text" id="bulk-acta" class="form-control w-full p-2 border border-slate-300 rounded-lg text-sm" placeholder="Ej. ACTA-2026-001">
+                    </div>
+                    <div class="form-group mb-3">
+                        <label class="block text-xs font-bold text-slate-600 mb-1" for="bulk-conductor">Conductor del Lote</label>
+                        <input type="text" id="bulk-conductor" class="form-control w-full p-2 border border-slate-300 rounded-lg text-sm" placeholder="Ej. Pedro Gómez">
+                    </div>
+                    <div class="form-group mb-4">
+                        <label class="block text-xs font-bold text-slate-600 mb-1" for="bulk-ruta">Ruta del Lote</label>
+                        <input type="text" id="bulk-ruta" class="form-control w-full p-2 border border-slate-300 rounded-lg text-sm" placeholder="Ej. Ruta Sur">
+                    </div>
+                    <button type="button" class="btn w-full bg-[#2b4c7e] hover:bg-[#1a3052] text-white p-2.5 rounded-lg font-semibold text-sm" onclick="processBulkAdd()">⚡ Agregar Lote</button>
+                </div>
+
+                <div id="camera-form-fields" style="display: none;">
+                    <div class="form-group mb-3">
+                        <label class="block text-xs font-bold text-slate-600 mb-1">Visor de Cámara</label>
+                        <div id="camera-scanner-view" class="w-full border rounded-lg overflow-hidden bg-black flex items-center justify-center relative min-h-[180px]">
+                            <div id="cam-reader" class="w-full"></div>
+                            <div id="cam-fallback-msg" class="p-6 text-center text-slate-400 text-xs">
+                                La cámara está detenida o no tiene permisos de acceso.
+                            </div>
+                        </div>
+                        <div class="flex gap-2 mt-2">
+                            <button type="button" class="btn flex-1 bg-emerald-600 hover:bg-emerald-700 transition-colors text-white py-2 rounded-lg text-xs font-semibold" id="start-cam-btn" onclick="startCameraScanner()">▶️ Activar Cámara</button>
+                            <button type="button" class="btn flex-1 bg-slate-600 hover:bg-slate-700 transition-colors text-white py-2 rounded-lg text-xs font-semibold" id="stop-cam-btn" style="display: none;" onclick="stopCameraScanner()">⏹️ Detener</button>
+                        </div>
+                    </div>
+                    <div class="form-group mb-3">
+                        <label class="block text-xs font-bold text-slate-600 mb-1" for="cam-acta">Número de Acta del Escaneo</label>
+                        <input type="text" id="cam-acta" class="form-control w-full p-2 border border-slate-300 rounded-lg text-sm" placeholder="Ej. ACTA-2026-001">
+                    </div>
+                    <div class="form-group mb-3">
+                        <label class="block text-xs font-bold text-slate-600 mb-1" for="cam-conductor">Conductor del Escaneo</label>
+                        <input type="text" id="cam-conductor" class="form-control w-full p-2 border border-slate-300 rounded-lg text-sm" placeholder="Ej. Carlos Martínez">
+                    </div>
+                    <div class="form-group mb-4">
+                        <label class="block text-xs font-bold text-slate-600 mb-1" for="cam-ruta">Ruta del Escaneo</label>
+                        <input type="text" id="cam-ruta" class="form-control w-full p-2 border border-slate-300 rounded-lg text-sm" placeholder="Ej. Ruta Express">
+                    </div>
+                </div>
+
+                <div class="sound-toggle flex items-center gap-2 mt-3 text-xs text-slate-500">
+                    <input type="checkbox" id="sound-active" checked class="w-4 h-4 text-[#2b4c7e] border-slate-300 rounded">
+                    <label for="sound-active">🔊 Sonidos activos (Bip / Alerta)</label>
+                </div>
+            </div>
+
+            <!-- ALMACENAMIENTO POR RUTA -->
+            <div class="card bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                <h2 class="text-lg font-semibold text-[#2b4c7e] border-b-2 border-slate-100 pb-2 mb-3">📍 Almacenamiento por Ruta</h2>
+                <p class="text-xs text-slate-500 mb-3 no-print">
+                    Aquí se visualizan las rutas cargadas, su nivel de verificación y entregas en terreno.
+                </p>
+                <div id="storage-routes-list" class="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-1">
+                </div>
+            </div>
+
+            <!-- DEVOLUCIONES Y MOTIVOS -->
+            <div class="card bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                <h2 class="text-lg font-semibold text-[#2b4c7e] border-b-2 border-slate-100 pb-2 mb-3">🔄 Devoluciones y Motivos</h2>
+                <p class="text-xs text-slate-500 mb-3 no-print">
+                    Edita el motivo de la devolución seleccionando una de las opciones estándar o escribiendo un motivo personalizado abajo.
+                </p>
+                <div id="returned-list" class="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-1">
+                </div>
+            </div>
+
+            <!-- ACTIVIDAD RECIENTE -->
+            <div class="card no-print bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                <h2 class="text-lg font-semibold text-[#2b4c7e] border-b-2 border-slate-100 pb-2 mb-3">📝 Actividad Reciente</h2>
+                <div id="activity-log-list" class="flex flex-col gap-2">
+                </div>
+            </div>
+
+            <!-- HERRAMIENTAS EXCEL -->
+            <div class="card no-print bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                <h2 class="text-lg font-semibold text-[#2b4c7e] border-b-2 border-slate-100 pb-2 mb-3">Herramientas Excel</h2>
+                <div class="import-zone bg-slate-50 border-2 border-dashed border-slate-300 rounded-lg p-4 text-center mb-3">
+                    <p class="font-medium text-xs text-slate-700 mb-1">Cargar listado de Excel</p>
+                    <p class="text-[10px] text-slate-500 mb-3">Guarda tu Excel como archivo .CSV e impórtalo aquí.</p>
+                    <input type="file" id="import-csv" accept=".csv" class="hidden">
+                    <button type="button" class="btn bg-slate-600 hover:bg-slate-700 transition-colors text-white py-1.5 px-4 rounded-lg text-xs" onclick="document.getElementById('import-csv').click()">📥 Seleccionar CSV</button>
+                </div>
+                <button type="button" class="btn w-full bg-[#2a9d8f] hover:bg-[#1f7369] transition-colors text-white py-2 rounded-lg mb-2 text-xs font-semibold" onclick="exportToCSV()">📤 Descargar Excel (CSV)</button>
+                <button type="button" class="btn btn-delete w-full text-red-600 border border-red-200 hover:bg-red-50 text-[11px] py-1.5 rounded-lg" onclick="clearAllInventory()">🗑️ Vaciar todo el inventario</button>
+            </div>
+        </div>
+
+        <div class="card lg:col-span-2 bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex flex-col">
+            <div class="flex justify-between items-center mb-4 no-print">
+                <h2 class="text-xl font-bold text-[#2b4c7e]">Listado de Sobres</h2>
+                <button type="button" class="btn bg-slate-600 hover:bg-slate-700 transition-colors w-auto px-4 py-1.5 text-white text-xs font-semibold rounded-lg" onclick="window.print()">🖨️ Imprimir Lista</button>
+            </div>
+            <h2 class="print-only text-2xl font-bold border-b pb-2 mb-4 hidden">Reporte de Sobres Procesados</h2>
+            
+            <div class="filter-tabs no-print flex bg-slate-100 p-1 rounded-lg gap-1 mb-4 flex-wrap">
+                <button type="button" class="tab-btn flex-1 py-1.5 text-xs font-semibold rounded-md active" id="tab-all" onclick="changeTab('all')">
+                    📋 Todos <span class="tab-count bg-slate-200 text-slate-700 px-1.5 rounded-full text-[10px]" id="count-all">0</span>
+                </button>
+                <button type="button" class="tab-btn flex-1 py-1.5 text-xs font-semibold rounded-md" id="tab-pending" onclick="changeTab('pending')">
+                    ⏳ Pendientes <span class="tab-count bg-slate-200 text-slate-700 px-1.5 rounded-full text-[10px]" id="count-pending">0</span>
+                </button>
+                <button type="button" class="tab-btn flex-1 py-1.5 text-xs font-semibold rounded-md" id="tab-checked" onclick="changeTab('checked')">
+                    📦 Listos <span class="tab-count bg-slate-200 text-slate-700 px-1.5 rounded-full text-[10px]" id="count-checked">0</span>
+                </button>
+                <button type="button" class="tab-btn flex-1 py-1.5 text-xs font-semibold rounded-md" id="tab-delivered" style="color: var(--delivery-color);" onclick="changeTab('delivered')">
+                    🚚 Entregados <span class="tab-count px-1.5 rounded-full text-[10px]" id="count-delivered" style="background-color: var(--delivery-color); color: white;">0</span>
+                </button>
+                <button type="button" class="tab-btn flex-1 py-1.5 text-xs font-semibold rounded-md" id="tab-returned" style="color: var(--returned-color);" onclick="changeTab('returned')">
+                    🔄 Devueltos <span class="tab-count px-1.5 rounded-full text-[10px]" id="count-returned" style="background-color: var(--returned-color); color: white;">0</span>
+                </button>
+            </div>
+            
+            <div class="action-bar no-print flex gap-2 flex-wrap mb-4">
+                <input type="text" id="search" class="form-control flex-1 p-2 border border-slate-300 rounded-lg text-sm" placeholder="🔍 Buscar por código, acta, conductor, ruta o receptor...">
+                
+                <select id="filter-conductor" class="form-control p-2 border border-slate-300 rounded-lg text-sm bg-white" style="max-width: 180px;" onchange="renderTable(searchInput.value)">
+                    <option value="">👤 Todos los Conductores</option>
+                </select>
+                
+                <select id="filter-acta" class="form-control p-2 border border-slate-300 rounded-lg text-sm bg-white" style="max-width: 150px;" onchange="renderTable(searchInput.value)">
+                    <option value="">📄 Todas las Actas</option>
+                </select>
+            </div>
+            
+            <div class="table-responsive overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-50 text-slate-700 text-xs uppercase border-b border-slate-200">
+                            <th class="w-[50px] text-center p-3">Listo</th>
+                            <th class="w-[80px] text-center p-3 text-emerald-600">Entregado</th>
+                            <th class="w-[80px] text-center p-3 text-orange-600">Devuelto</th>
+                            <th class="p-3">Código de Barra / Estado</th>
+                            <th class="p-3">Nº Acta (Editable)</th>
+                            <th class="p-3">Conductor (Editable)</th>
+                            <th class="p-3">Ruta (Editable)</th>
+                            <th class="w-[80px] text-center p-3">Cant.</th>
+                            <th class="w-[80px] text-center p-3 no-print">Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody id="inventory-table-body" class="divide-y divide-slate-100 text-slate-800 text-xs">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: REGISTRO DE DEVOLUCIÓN -->
+<div id="return-reason-modal" class="modal-overlay no-print" style="display: none;">
+    <div class="modal-content">
+        <h3 class="text-base font-bold mb-2 flex items-center gap-2 text-orange-600">🔄 Registrar Devolución</h3>
+        <p class="text-xs text-slate-500 mb-4">
+            Por favor, indica la causa de devolución para el sobre: <strong id="return-modal-barcode" class="text-slate-900 font-bold"></strong>
+        </p>
+        
+        <div class="form-group mb-3">
+            <label class="block text-xs font-semibold text-slate-600 mb-1" for="return-reason-select">Selecciona el Motivo:</label>
+            <select id="return-reason-select" class="form-control w-full p-2 border border-slate-300 rounded-lg text-sm bg-white" onchange="handleReturnReasonSelectChange()">
+                <option value="Dirección incorrecta o insuficiente">Dirección incorrecta o insuficiente</option>
+                <option value="Destinatario ausente">Destinatario ausente</option>
+                <option value="Rechazado por el destinatario">Rechazado por el destinatario</option>
+                <option value="No responde al llamado">No responde al llamado</option>
+                <option value="Zona inaccesible / Peligrosa">Zona inaccesible / Peligrosa</option>
+                <option value="Otro">Otro motivo (Especificar abajo...)</option>
+            </select>
+        </div>
+        
+        <div class="form-group mb-4" id="custom-reason-group" style="display: none;">
+            <label class="block text-xs font-semibold text-slate-600 mb-1" for="return-reason-custom">Escribe el motivo personalizado:</label>
+            <input type="text" id="return-reason-custom" class="form-control w-full p-2 border border-slate-300 rounded-lg text-sm" placeholder="Ej: Embalaje dañado en ruta">
+        </div>
+        
+        <div class="modal-actions flex justify-end gap-2 mt-4">
+            <button class="btn btn-secondary bg-slate-100 hover:bg-slate-200 text-slate-700 w-auto px-4 py-1.5 rounded-lg text-xs" onclick="cancelReturnReason()">Cancelar</button>
+            <button class="btn bg-orange-600 hover:bg-orange-700 text-white w-auto px-4 py-1.5 rounded-lg text-xs font-bold" onclick="confirmReturnReason()">Confirmar Motivo</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL ALERTA GENERAL -->
+<div id="custom-modal" class="modal-overlay no-print" style="display: none;">
+    <div class="modal-content">
+        <h3 id="modal-title" class="text-base font-bold text-slate-800 mb-2">Alerta</h3>
+        <p id="modal-message" class="text-xs text-slate-600 mb-5"></p>
+        <div class="modal-actions flex justify-end gap-2">
+            <button id="modal-btn-cancel" class="btn btn-secondary bg-slate-100 hover:bg-slate-200 text-slate-700 w-auto px-4 py-1.5 rounded-lg text-xs">Cancelar</button>
+            <button id="modal-btn-confirm" class="btn bg-[#2b4c7e] hover:bg-[#1a3052] text-white w-auto px-4 py-1.5 rounded-lg text-xs font-bold">Aceptar</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Configuración híbrida de Nube / Offline
+    var hasCloud = typeof __firebase_config !== 'undefined' && typeof __app_id !== 'undefined';
+    var appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    
+    var db = null;
+    var auth = null;
+    var user = null;
+    var unsubscribeFirestore = null;
+    var currentChannel = localStorage.getItem('sobres_channel') || 'GENERAL';
+
+    var inventory = JSON.parse(localStorage.getItem('sobres_inventory')) || [];
+    var activityLog = JSON.parse(localStorage.getItem('sobres_activity_log')) || [
+        { time: new Date().toLocaleTimeString(), action: "Sistema iniciado correctamente" }
+    ];
+    var currentTab = 'all';
+    var currentFormMode = 'single';
+    var html5QrScannerInstance = null;
+    var lastCameraScannedCode = "";
+    var lastCameraScanTime = 0;
+    
+    var activeReturnIndex = null; 
+
+    // Elementos del DOM
+    var envelopeForm = document.getElementById('envelope-form');
+    var barcodeInput = document.getElementById('barcode');
+    var actaInput = document.getElementById('acta');
+    var conductorInput = document.getElementById('conductor');
+    var rutaInput = document.getElementById('ruta');
+    var quantityInput = document.getElementById('quantity');
+    var searchInput = document.getElementById('search');
+    var tableBody = document.getElementById('inventory-table-body');
+    var soundActive = document.getElementById('sound-active');
+    var importCsvInput = document.getElementById('import-csv');
+
+    var statUnique = document.getElementById('stat-unique');
+    var statTotalQty = document.getElementById('stat-total-qty');
+    var statChecked = document.getElementById('stat-checked');
+    var statDelivered = document.getElementById('stat-delivered');
+    var statReturned = document.getElementById('stat-returned');
+    
+    var progressFill = document.getElementById('progress-fill');
+    var progressPercentage = document.getElementById('progress-percentage');
+    var progressStatusText = document.getElementById('progress-status-text');
+
+    var progressDeliveryFill = document.getElementById('progress-delivery-fill');
+    var progressDeliveryPercentage = document.getElementById('progress-delivery-percentage');
+    var progressDeliveryStatusText = document.getElementById('progress-delivery-status-text');
+
+    var countAll = document.getElementById('count-all');
+    var countPending = document.getElementById('count-pending');
+    var countChecked = document.getElementById('count-checked');
+    var countDelivered = document.getElementById('count-delivered');
+    var countReturned = document.getElementById('count-returned');
+
+    var filterConductor = document.getElementById('filter-conductor');
+    var filterActa = document.getElementById('filter-acta');
+
+    var channelInput = document.getElementById('channel-id-input');
+    var cloudInfoStatus = document.getElementById('cloud-info-status');
+    var cloudStatusBadge = document.getElementById('cloud-status-badge');
+
+    // Inicialización del entorno de Firebase en modo Compat
+    if (hasCloud) {
+        try {
+            var firebaseConfig = JSON.parse(__firebase_config);
+            firebase.initializeApp(firebaseConfig);
+            auth = firebase.auth();
+            db = firebase.firestore();
+            
+            cloudStatusBadge.textContent = "🟡 Conectando...";
+            cloudStatusBadge.style.backgroundColor = "var(--returned-color)";
+            cloudInfoStatus.innerHTML = `Estado: <strong style="color: var(--returned-color);">Estableciendo enlace...</strong>`;
+        } catch (e) {
+            console.error("Fallo de inicialización Firebase Compat: ", e);
+        }
+    } else {
+        cloudStatusBadge.textContent = "⚪ Modo Local";
+        cloudStatusBadge.style.backgroundColor = "var(--secondary-color)";
+        cloudInfoStatus.innerHTML = `Estado: <strong style="color: var(--secondary-color);">Modo Local Offline</strong>`;
+    }
+
+    var initAuthAndSync = async function() {
+        if (!hasCloud || !auth || !db) return;
+        try {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await auth.signInWithCustomToken(__initial_auth_token);
+            } else {
+                await auth.signInAnonymously();
+            }
+        } catch (err) {
+            try {
+                await auth.signInAnonymously();
+            } catch (anonErr) {
+                console.error("Fallo de autenticación anónima: ", anonErr);
+            }
+        }
+    };
+
+    if (auth) {
+        auth.onAuthStateChanged(function(u) {
+            user = u;
+            if (user) {
+                setupFirestoreListener();
+            } else {
+                if (unsubscribeFirestore) unsubscribeFirestore();
+                cloudStatusBadge.textContent = "⚪ Modo Local";
+                cloudStatusBadge.style.backgroundColor = "var(--secondary-color)";
+                cloudInfoStatus.innerHTML = `Estado: <strong style="color: var(--secondary-color);">Modo Local Offline</strong>`;
+            }
+        });
+    }
+
+    function setupFirestoreListener() {
+        if (!db || !user) return;
+        if (unsubscribeFirestore) unsubscribeFirestore();
+
+        var q = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('sobres');
+        
+        unsubscribeFirestore = q.onSnapshot(function(snapshot) {
+            var rawItems = [];
+            snapshot.forEach(function(doc) {
+                rawItems.push(doc.data());
+            });
+
+            inventory = rawItems.filter(function(item) {
+                return (item.channelId || 'GENERAL').toUpperCase() === currentChannel.toUpperCase();
+            });
+            localStorage.setItem('sobres_inventory', JSON.stringify(inventory));
+            renderTable(searchInput.value);
+            
+            cloudStatusBadge.textContent = `🟢 En Línea: ${currentChannel}`;
+            cloudStatusBadge.style.backgroundColor = "var(--delivery-color)";
+            cloudInfoStatus.innerHTML = `Estado: <strong style="color: var(--delivery-color);">🟢 Enlazado en tiempo real (Canal: ${currentChannel})</strong>`;
+        }, function(error) {
+            console.error("Fallo de onSnapshot: ", error);
+            cloudStatusBadge.textContent = "⚠️ Error de Red";
+            cloudStatusBadge.style.backgroundColor = "var(--danger-color)";
+            cloudInfoStatus.innerHTML = `Estado: <strong style="color: var(--danger-color);">⚠️ Error de comunicación</strong>`;
+        });
+    }
+
+    async function commitChange(item, isDeletion) {
+        if (hasCloud && db && user) {
+            try {
+                var docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('sobres').doc(item.barcode);
+                if (isDeletion) {
+                    await docRef.delete();
+                } else {
+                    item.channelId = currentChannel.toUpperCase();
+                    await docRef.set(item);
+                }
+            } catch (e) {
+                console.error("Fallo al guardar en Firestore: ", e);
+                saveAndRefresh();
+            }
+        } else {
+            saveAndRefresh();
+        }
+    }
+
+    async function changeChannel() {
+        var newChan = channelInput.value.trim().toUpperCase();
+        if (!newChan) {
+            await showAlert("Error de Enlace", "Por favor ingresa un nombre de canal válido.");
+            return;
+        }
+        currentChannel = newChan;
+        localStorage.setItem('sobres_channel', currentChannel);
+        logActivity(`Vínculo de canal cambiado a: ${currentChannel}`);
+        
+        if (hasCloud && db && user) {
+            setupFirestoreListener();
+        } else {
+            renderTable(searchInput.value);
+        }
+    }
+
+    // Modal de Alertas no bloqueante (Reemplaza a alert)
+    function showAlert(title, msg) {
+        return new Promise(function(resolve) {
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-message').textContent = msg;
+            document.getElementById('modal-btn-cancel').style.display = 'none';
+            var confirmBtn = document.getElementById('modal-btn-confirm');
+            confirmBtn.textContent = 'Aceptar';
+            document.getElementById('custom-modal').style.display = 'flex';
+            
+            var handleConfirm = function() {
+                document.getElementById('custom-modal').style.display = 'none';
+                confirmBtn.removeEventListener('click', handleConfirm);
+                resolve(true);
+            };
+            confirmBtn.addEventListener('click', handleConfirm);
+        });
+    }
+
+    // Modal de confirmación no bloqueante (Reemplaza a confirm)
+    function showConfirm(title, msg) {
+        return new Promise(function(resolve) {
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-message').textContent = msg;
+            var cancelBtn = document.getElementById('modal-btn-cancel');
+            cancelBtn.style.display = 'inline-block';
+            var confirmBtn = document.getElementById('modal-btn-confirm');
+            confirmBtn.textContent = 'Confirmar';
+            document.getElementById('custom-modal').style.display = 'flex';
+            
+            var handleConfirm = function() { cleanup(); resolve(true); };
+            var handleCancel = function() { cleanup(); resolve(false); };
+            var cleanup = function() {
+                document.getElementById('custom-modal').style.display = 'none';
+                confirmBtn.removeEventListener('click', handleConfirm);
+                cancelBtn.removeEventListener('click', handleCancel);
+            };
+            confirmBtn.addEventListener('click', handleConfirm);
+            cancelBtn.addEventListener('click', handleCancel);
+        });
+    }
+
+    function playBeep() {
+        if (!soundActive.checked) return;
+        playSound(900, 0.12, 0.12);
+    }
+
+    function playAlertSound() {
+        if (!soundActive.checked) return;
+        playSound(280, 0.25, 0.25);
+        setTimeout(function() { playSound(220, 0.25, 0.25); }, 100);
+    }
+
+    function playSound(frequency, volume, duration) {
+        try {
+            var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            var oscillator = audioCtx.createOscillator();
+            var gainNode = audioCtx.createGain();
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(volume, audioCtx.currentTime);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + duration);
+            oscillator.stop(audioCtx.currentTime + duration);
+        } catch (e) {
+            console.log("Audio no soportado o bloqueado por el navegador");
+        }
+    }
+
+    function logActivity(actionText) {
+        var timestamp = new Date().toLocaleTimeString();
+        activityLog.unshift({ time: timestamp, action: actionText });
+        if (activityLog.length > 5) activityLog.pop();
+        localStorage.setItem('sobres_activity_log', JSON.stringify(activityLog));
+        renderActivityLog();
+    }
+
+    function renderActivityLog() {
+        var logList = document.getElementById('activity-log-list');
+        logList.innerHTML = '';
+        activityLog.forEach(function(item) {
+            var div = document.createElement('div');
+            div.className = 'log-item';
+            div.innerHTML = `<span class="log-time">[${item.time}]</span> <span class="log-text">${item.action}</span>`;
+            logList.appendChild(div);
+        });
+    }
+
+    window.addEventListener('DOMContentLoaded', function() {
+        channelInput.value = currentChannel;
+        barcodeInput.focus();
+        initAuthAndSync();
+        renderTable();
+        renderActivityLog();
+    });
+
+    document.body.addEventListener('click', function(e) {
+        if (e.target.tagName !== 'INPUT' && 
+            e.target.tagName !== 'BUTTON' && 
+            e.target.tagName !== 'LABEL' && 
+            e.target.tagName !== 'SELECT' && 
+            e.target.tagName !== 'TEXTAREA' &&
+            !e.target.classList.contains('editable-cell') &&
+            !e.target.closest('.import-zone') &&
+            !e.target.closest('.filter-tabs') &&
+            !e.target.closest('.internal-tabs') &&
+            !e.target.closest('.modal-content') &&
+            !e.target.closest('#camera-scanner-view') &&
+            !e.target.closest('#returned-list') &&
+            !e.target.closest('#return-reason-modal')) {
+            
+            if (currentFormMode === 'single') barcodeInput.focus();
+            else if (currentFormMode === 'bulk') document.getElementById('bulk-barcodes').focus();
+        }
+    });
+
+    function saveAndRefresh() {
+        localStorage.setItem('sobres_inventory', JSON.stringify(inventory));
+        renderTable(searchInput.value);
+    }
+
+    function toggleFormMode(mode) {
+        currentFormMode = mode;
+        document.getElementById('form-tab-single').classList.toggle('active', mode === 'single');
+        document.getElementById('form-tab-bulk').classList.toggle('active', mode === 'bulk');
+        document.getElementById('form-tab-camera').classList.toggle('active', mode === 'camera');
+        
+        document.getElementById('single-form-fields').style.display = mode === 'single' ? 'block' : 'none';
+        document.getElementById('bulk-form-fields').style.display = mode === 'bulk' ? 'block' : 'none';
+        document.getElementById('camera-form-fields').style.display = mode === 'camera' ? 'block' : 'none';
+        
+        if (mode !== 'camera') stopCameraScanner();
+        if (mode === 'single') barcodeInput.focus();
+        else if (mode === 'bulk') document.getElementById('bulk-barcodes').focus();
+    }
+
+    function changeTab(tabName) {
+        currentTab = tabName;
+        document.getElementById('tab-all').classList.remove('active');
+        document.getElementById('tab-pending').classList.remove('active');
+        document.getElementById('tab-checked').classList.remove('active');
+        document.getElementById('tab-delivered').classList.remove('active');
+        document.getElementById('tab-returned').classList.remove('active');
+        document.getElementById(`tab-${tabName}`).classList.add('active');
+        renderTable(searchInput.value);
+    }
+
+    envelopeForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        var barcode = barcodeInput.value.trim();
+        var acta = actaInput.value.trim();
+        var conductor = conductorInput.value.trim();
+        var ruta = rutaInput.value.trim();
+        var quantity = parseInt(quantityInput.value) || 1;
+
+        if (!barcode) return;
+
+        var existingItemIndex = inventory.findIndex(function(item) {
+            return item.barcode.toLowerCase() === barcode.toLowerCase();
+        });
+        var finalItem = null;
+
+        if (existingItemIndex !== -1) {
+            finalItem = inventory[existingItemIndex];
+            if (finalItem.returned) {
+                playAlertSound();
+                await showAlert('⚠️ ¡Alerta de Devolución!', `El sobre "${barcode}" ya figura como DEVUELTO.\nMotivo: "${finalItem.returnReason || 'No especificado'}".`);
+            } else if (finalItem.delivered) {
+                playAlertSound();
+                await showAlert('⚠️ ¡Sobre ya Entregado!', `El sobre "${barcode}" ya figura como ENTREGADO.`);
+            } else if (finalItem.checked) {
+                playAlertSound();
+                await showAlert('⚠️ ¡Sobre ya Listo!', `El sobre "${barcode}" ya figura como LISTO para despacho.`);
+            } else {
+                playBeep();
+            }
+            finalItem.quantity += quantity;
+            if (acta) finalItem.acta = acta;
+            if (conductor) finalItem.conductor = conductor;
+            if (ruta) finalItem.ruta = ruta;
+        } else {
+            playBeep();
+            finalItem = {
+                barcode: barcode,
+                acta: acta || 'Sin acta',
+                conductor: conductor || 'Sin conductor',
+                ruta: ruta || 'Sin ruta',
+                quantity: quantity,
+                checked: false,
+                delivered: false,
+                returned: false,
+                returnReason: '',
+                statusDate: '',
+                receiverName: '',
+                receiverId: '',
+                receiverRelation: ''
+            };
+            inventory.push(finalItem);
+        }
+
+        barcodeInput.value = '';
+        actaInput.value = '';
+        conductorInput.value = '';
+        rutaInput.value = '';
+        quantityInput.value = '1';
+        barcodeInput.focus();
+
+        await commitChange(finalItem, false);
+    });
+
+    async function processBulkAdd() {
+        var barcodesText = document.getElementById('bulk-barcodes').value;
+        var acta = document.getElementById('bulk-acta').value.trim();
+        var conductor = document.getElementById('bulk-conductor').value.trim();
+        var ruta = document.getElementById('bulk-ruta').value.trim();
+        
+        if (!barcodesText.trim()) {
+            await showAlert('Error de Ingreso', 'Por favor, escanea o digita al menos un código de barra.');
+            return;
+        }
+
+        var rawCodes = barcodesText.split(/[\n,;]+/);
+        var addedCount = 0;
+        var updatedCount = 0;
+
+        for (var i = 0; i < rawCodes.length; i++) {
+            var code = rawCodes[i].trim();
+            if (!code) continue; 
+
+            var existingIndex = inventory.findIndex(function(item) {
+                return item.barcode.toLowerCase() === code.toLowerCase();
+            });
+            var itemToSave = null;
+
+            if (existingIndex !== -1) {
+                itemToSave = inventory[existingIndex];
+                itemToSave.quantity += 1;
+                if (acta) itemToSave.acta = acta;
+                if (conductor) itemToSave.conductor = conductor;
+                if (ruta) itemToSave.ruta = ruta;
+                updatedCount++;
+            } else {
+                itemToSave = {
+                    barcode: code,
+                    acta: acta || 'Sin acta',
+                    conductor: conductor || 'Sin conductor',
+                    ruta: ruta || 'Sin ruta',
+                    quantity: 1,
+                    checked: false,
+                    delivered: false,
+                    returned: false,
+                    returnReason: '',
+                    statusDate: '',
+                    receiverName: '',
+                    receiverId: '',
+                    receiverRelation: ''
+                };
+                inventory.push(itemToSave);
+                addedCount++;
+            }
+            await commitChange(itemToSave, false);
+        }
+
+        document.getElementById('bulk-barcodes').value = '';
+        document.getElementById('bulk-acta').value = '';
+        document.getElementById('bulk-conductor').value = '';
+        document.getElementById('bulk-ruta').value = '';
+        playBeep();
+        await showAlert('Éxito en Lote', `Procesado: ${addedCount} creados, ${updatedCount} actualizados.`);
+    }
+
+    function startCameraScanner() {
+        document.getElementById('cam-fallback-msg').style.display = 'none';
+        document.getElementById('start-cam-btn').style.display = 'none';
+        document.getElementById('stop-cam-btn').style.display = 'inline-flex';
+
+        html5QrScannerInstance = new Html5Qrcode("cam-reader");
+        html5QrScannerInstance.start(
+            { facingMode: "environment" },
+            { fps: 10, qrbox: { width: 250, height: 150 } },
+            onCameraScanSuccess,
+            onCameraScanError
+        ).catch(function(err) {
+            showAlert("Error de Cámara", "No se pudo acceder al dispositivo de video. Asegúrate de estar usando HTTPS en un servidor seguro.");
+            stopCameraScanner();
+        });
+    }
+
+    function stopCameraScanner() {
+        document.getElementById('start-cam-btn').style.display = 'inline-flex';
+        document.getElementById('stop-cam-btn').style.display = 'none';
+        document.getElementById('cam-fallback-msg').style.display = 'block';
+
+        if (html5QrScannerInstance) {
+            html5QrScannerInstance.stop().then(function() {
+                html5QrScannerInstance = null;
+                document.getElementById('cam-reader').innerHTML = "";
+            }).catch(function(err) { console.error(err); });
+        }
+    }
+
+    async function onCameraScanSuccess(decodedText) {
+        var now = Date.now();
+        if (decodedText === lastCameraScannedCode && (now - lastCameraScanTime) < 2000) return;
+
+        lastCameraScannedCode = decodedText;
+        lastCameraScanTime = now;
+
+        var acta = document.getElementById('cam-acta').value.trim();
+        var conductor = document.getElementById('cam-conductor').value.trim();
+        var ruta = document.getElementById('cam-ruta').value.trim();
+
+        var existingItemIndex = inventory.findIndex(function(item) {
+            return item.barcode.toLowerCase() === decodedText.toLowerCase();
+        });
+        var finalItem = null;
+
+        if (existingItemIndex !== -1) {
+            finalItem = inventory[existingItemIndex];
+            playBeep();
+            finalItem.quantity += 1;
+            if (acta) finalItem.acta = acta;
+            if (conductor) finalItem.conductor = conductor;
+            if (ruta) finalItem.ruta = ruta;
+        } else {
+            playBeep();
+            finalItem = {
+                barcode: decodedText,
+                acta: acta || 'Sin acta',
+                conductor: conductor || 'Sin conductor',
+                ruta: ruta || 'Sin ruta',
+                quantity: 1,
+                checked: false,
+                delivered: false,
+                returned: false,
+                returnReason: '',
+                statusDate: '',
+                receiverName: '',
+                receiverId: '',
+                receiverRelation: ''
+            };
+            inventory.push(finalItem);
+        }
+        await commitChange(finalItem, false);
+    }
+
+    function onCameraScanError(errorMessage) {}
+
+    async function updateActaInTable(index, newText) {
+        var cleanText = newText.trim() || 'Sin acta';
+        if (inventory[index].acta !== cleanText) {
+            inventory[index].acta = cleanText;
+            await commitChange(inventory[index], false);
+        }
+    }
+
+    async function updateConductorInTable(index, newText) {
+        var cleanText = newText.trim() || 'Sin conductor';
+        if (inventory[index].conductor !== cleanText) {
+            inventory[index].conductor = cleanText;
+            await commitChange(inventory[index], false);
+        }
+    }
+
+    async function updateRutaInTable(index, newText) {
+        var cleanText = newText.trim() || 'Sin ruta';
+        if (inventory[index].ruta !== cleanText) {
+            inventory[index].ruta = cleanText;
+            await commitChange(inventory[index], false);
+        }
+    }
+
+    async function updateQuantityInTable(index, newQty) {
+        var val = parseInt(newQty);
+        if (isNaN(val) || val < 1) val = 1;
+        inventory[index].quantity = val;
+        await commitChange(inventory[index], false);
+    }
+
+    async function toggleCheck(index) {
+        inventory[index].checked = !inventory[index].checked;
+        if (inventory[index].checked) {
+            inventory[index].statusDate = new Date().toLocaleString();
+        } else {
+            inventory[index].delivered = false;
+            inventory[index].returned = false;
+            inventory[index].returnReason = '';
+            inventory[index].receiverName = '';
+            inventory[index].receiverId = '';
+            inventory[index].receiverRelation = '';
+            inventory[index].statusDate = '';
+        }
+        await commitChange(inventory[index], false);
+    }
+
+    async function toggleDelivered(index) {
+        inventory[index].delivered = !inventory[index].delivered;
+        if (inventory[index].delivered) {
+            inventory[index].checked = true; 
+            inventory[index].returned = false; 
+            inventory[index].returnReason = '';
+            inventory[index].receiverName = '';
+            inventory[index].receiverId = '';
+            inventory[index].receiverRelation = '';
+            inventory[index].statusDate = new Date().toLocaleString();
+        } else {
+            inventory[index].statusDate = inventory[index].checked ? new Date().toLocaleString() : '';
+        }
+        await commitChange(inventory[index], false);
+    }
+
+    function toggleReturned(index) {
+        if (!inventory[index].returned) {
+            showReturnReasonModal(index);
+        } else {
+            inventory[index].returned = false;
+            inventory[index].returnReason = '';
+            inventory[index].statusDate = inventory[index].checked ? new Date().toLocaleString() : '';
+            commitChange(inventory[index], false);
+        }
+    }
+
+    function showReturnReasonModal(index) {
+        activeReturnIndex = index;
+        var item = inventory[index];
+        document.getElementById('return-modal-barcode').textContent = item.barcode;
+        
+        var select = document.getElementById('return-reason-select');
+        var customInput = document.getElementById('return-reason-custom');
+        select.value = "Dirección incorrecta o insuficiente";
+        customInput.value = "";
+        document.getElementById('custom-reason-group').style.display = 'none';
+        document.getElementById('return-reason-modal').style.display = 'flex';
+    }
+
+    function handleReturnReasonSelectChange() {
+        var select = document.getElementById('return-reason-select');
+        var customGroup = document.getElementById('custom-reason-group');
+        if (select.value === 'Otro') {
+            customGroup.style.display = 'block';
+            document.getElementById('return-reason-custom').focus();
+        } else {
+            customGroup.style.display = 'none';
+        }
+    }
+
+    async function confirmReturnReason() {
+        if (activeReturnIndex === null) return;
+        var select = document.getElementById('return-reason-select');
+        var customInput = document.getElementById('return-reason-custom');
+        
+        var reason = select.value;
+        if (reason === 'Otro') {
+            reason = customInput.value.trim() || 'Otro motivo no especificado';
+        }
+        
+        inventory[activeReturnIndex].returned = true;
+        inventory[activeReturnIndex].checked = true;
+        inventory[activeReturnIndex].delivered = false; 
+        inventory[activeReturnIndex].receiverName = '';
+        inventory[activeReturnIndex].receiverId = '';
+        inventory[activeReturnIndex].receiverRelation = '';
+        inventory[activeReturnIndex].returnReason = reason;
+        inventory[activeReturnIndex].statusDate = new Date().toLocaleString();
+        
+        var item = inventory[activeReturnIndex];
+        document.getElementById('return-reason-modal').style.display = 'none';
+        activeReturnIndex = null;
+        await commitChange(item, false);
+    }
+
+    function cancelReturnReason() {
+        document.getElementById('return-reason-modal').style.display = 'none';
+        activeReturnIndex = null;
+        renderTable(searchInput.value); 
+    }
+
+    async function updateReturnReasonDropdown(index, value) {
+        var customGrp = document.getElementById(`left-custom-reason-grp-${index}`);
+        if (value === 'Otro') {
+            customGrp.style.display = 'block';
+            inventory[index].returnReason = 'Otro motivo';
+        } else {
+            customGrp.style.display = 'none';
+            inventory[index].returnReason = value;
+        }
+        inventory[index].statusDate = new Date().toLocaleString();
+        await commitChange(inventory[index], false);
+    }
+
+    async function updateReturnReasonCustom(index, value) {
+        var cleanText = value.trim() || 'Otro motivo';
+        inventory[index].returnReason = cleanText;
+        inventory[index].statusDate = new Date().toLocaleString();
+        await commitChange(inventory[index], false);
+    }
+
+    function updateFilterDropdowns() {
+        var selectedCond = filterConductor.value;
+        var selectedActa = filterActa.value;
+        var conductores = [...new Set(inventory.map(function(item) { return item.conductor || 'Sin conductor'; }).filter(Boolean))];
+        var actas = [...new Set(inventory.map(function(item) { return item.acta || 'Sin acta'; }).filter(Boolean))];
+
+        filterConductor.innerHTML = '<option value="">👤 Todos los Conductores</option>';
+        conductores.sort().forEach(function(cond) {
+            var opt = document.createElement('option');
+            opt.value = cond; opt.textContent = cond;
+            if (cond === selectedCond) opt.selected = true;
+            filterConductor.appendChild(opt);
+        });
+
+        filterActa.innerHTML = '<option value="">📄 Todas las Actas</option>';
+        actas.sort().forEach(function(acta) {
+            var opt = document.createElement('option');
+            opt.value = acta; opt.textContent = acta;
+            if (acta === selectedActa) opt.selected = true;
+            filterActa.appendChild(opt);
+        });
+    }
+
+    async function deleteItem(index) {
+        var confirmResult = await showConfirm('Confirmar Eliminación', '¿Está seguro de que desea eliminar este sobre del listado?');
+        if (confirmResult) {
+            var item = inventory[index];
+            inventory.splice(index, 1);
+            await commitChange(item, true);
+        }
+    }
+
+    async function clearAllInventory() {
+        var confirmResult = await showConfirm('⚠️ Vaciar Inventario', '¿Estás completamente seguro de borrar todo? Se perderán los datos almacenados.');
+        if (confirmResult) {
+            var itemsToDelete = [...inventory];
+            inventory = [];
+            for (var i = 0; i < itemsToDelete.length; i++) {
+                await commitChange(itemsToDelete[i], true);
+            }
+        }
+    }
+
+    searchInput.addEventListener('input', function() { renderTable(searchInput.value); });
+
+    importCsvInput.addEventListener('change', function(e) {
+        var file = e.target.files[0];
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = async function(evt) {
+            var contents = evt.target.result;
+            var lines = contents.split(/\r?\n/);
+            var importedCount = 0;
+
+            for (var index = 0; index < lines.length; index++) {
+                var line = lines[index];
+                if (!line.trim()) continue;
+                var separator = line.includes(';') ? ';' : ',';
+                var columns = line.split(separator);
+                var barcode = columns[0] ? columns[0].trim().replace(/^["']|["']$/g, '') : '';
+
+                if (index === 0 && (barcode.toLowerCase().includes('codigo') || barcode.toLowerCase().includes('barcode'))) continue;
+
+                if (barcode) {
+                    var acta = 'Sin acta', conductor = 'Sin conductor', ruta = 'Sin ruta', quantity = 1;
+                    var checked = false, delivered = false, returned = false, returnReason = '', statusDate = '';
+                    var receiverName = '', receiverId = '', receiverRelation = '';
+
+                    if (columns.length >= 13) {
+                        acta = columns[1] ? columns[1].trim().replace(/^["']|["']$/g, '') : 'Sin acta';
+                        conductor = columns[2] ? columns[2].trim().replace(/^["']|["']$/g, '') : 'Sin conductor';
+                        ruta = columns[3] ? columns[3].trim().replace(/^["']|["']$/g, '') : 'Sin ruta';
+                        quantity = parseInt(columns[4]) || 1;
+                        checked = columns[5] ? columns[5].trim().toUpperCase() === 'SI' : false;
+                        delivered = columns[6] ? columns[6].trim().toUpperCase() === 'SI' : false;
+                        returned = columns[7] ? columns[7].trim().toUpperCase() === 'SI' : false;
+                        returnReason = columns[8] ? columns[8].trim().replace(/^["']|["']$/g, '') : '';
+                        statusDate = columns[9] ? columns[9].trim().replace(/^["']|["']$/g, '') : '';
+                        receiverName = columns[10] ? columns[10].trim().replace(/^["']|["']$/g, '') : '';
+                        receiverId = columns[11] ? columns[11].trim().replace(/^["']|["']$/g, '') : '';
+                        receiverRelation = columns[12] ? columns[12].trim().replace(/^["']|["']$/g, '') : '';
+                    } else if (columns.length === 4) {
+                        conductor = columns[1] ? columns[1].trim().replace(/^["']|["']$/g, '') : 'Sin conductor';
+                        ruta = columns[2] ? columns[2].trim().replace(/^["']|["']$/g, '') : 'Sin ruta';
+                        quantity = parseInt(columns[3]) || 1;
+                    }
+
+                    var existingIndex = inventory.findIndex(function(item) {
+                        return item.barcode.toLowerCase() === barcode.toLowerCase();
+                    });
+                    var finalItem = null;
+                    if (existingIndex !== -1) {
+                        finalItem = inventory[existingIndex];
+                        finalItem.quantity += quantity;
+                    } else {
+                        finalItem = { barcode, acta, conductor, ruta, quantity, checked, delivered, returned, returnReason, statusDate, receiverName, receiverId, receiverRelation };
+                        inventory.push(finalItem);
+                    }
+                    await commitChange(finalItem, false);
+                    importedCount++;
+                }
+            }
+            if(importedCount > 0) {
+                playBeep();
+                await showAlert('Carga Exitosa', `Se procesaron ${importedCount} registros desde tu Excel CSV.`);
+            }
+            importCsvInput.value = '';
+        };
+        reader.readAsText(file, 'UTF-8');
+    });
+
+    async function exportToCSV() {
+        if (inventory.length === 0) {
+            await showAlert('Sin Datos', 'No hay datos en el listado para poder exportar.');
+            return;
+        }
+        var csvContent = "\uFEFFCódigo de Barra;Número de Acta;Conductor;Ruta;Cantidad;Listo;Entregado;Devuelto;Motivo Devolución;Fecha/Hora Estado;Quién Recibe;Identificación Receptor;Relación Receptor\n";
+        inventory.forEach(function(item) {
+            csvContent += `"${item.barcode}";"${item.acta || 'Sin acta'}";"${item.conductor || 'Sin conductor'}";"${item.ruta || 'Sin ruta'}";${item.quantity};"${item.checked?'SI':'NO'}";"${item.delivered?'SI':'NO'}";"${item.returned?'SI':'NO'}";"${(item.returnReason||'').replace(/"/g, '""')}";"${item.statusDate||''}";"${(item.receiverName||'').replace(/"/g, '""')}";"${(item.receiverId||'').replace(/"/g, '""')}";"${item.receiverRelation||''}"\n`;
+        });
+        var blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        var link = document.createElement("a");
+        link.setAttribute("href", URL.createObjectURL(blob));
+        link.setAttribute("download", `reporte_sobres_${new Date().toISOString().slice(0,10)}.csv`);
+        document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    }
+
+    function renderStorage() {
+        var storageContainer = document.getElementById('storage-routes-list');
+        storageContainer.innerHTML = '';
+        var grouped = {};
+        inventory.forEach(function(item) {
+            var route = item.ruta || 'Sin ruta';
+            if (!grouped[route]) grouped[route] = [];
+            grouped[route].push(item);
+        });
+
+        var routes = Object.keys(grouped);
+        if (routes.length === 0) {
+            storageContainer.innerHTML = `<div style="color: var(--text-muted); font-style: italic; font-size: 12px; text-align: center; padding: 15px 0;">No hay sobres en almacenamiento aún.</div>`;
+            return;
+        }
+
+        routes.forEach(function(route) {
+            var routeDiv = document.createElement('div');
+            routeDiv.className = 'storage-route-card';
+            var totalItems = grouped[route].length;
+            var totalQty = grouped[route].reduce(function(sum, item) { return sum + item.quantity; }, 0);
+            var checkedItems = grouped[route].filter(function(item) { return item.checked; }).length;
+            var deliveredItems = grouped[route].filter(function(item) { return item.delivered; }).length;
+            var returnedItems = grouped[route].filter(function(item) { return item.returned; }).length;
+
+            var readyPercentage = totalItems > 0 ? Math.round((checkedItems / totalItems) * 100) : 0;
+            var deliveredPercentage = totalItems > 0 ? Math.round((deliveredItems / totalItems) * 100) : 0;
+
+            if (returnedItems === totalItems && totalItems > 0) { routeDiv.style.borderLeftColor = 'var(--returned-color)'; routeDiv.style.backgroundColor = 'var(--returned-bg)'; }
+            else if (deliveredItems === totalItems && totalItems > 0) { routeDiv.style.borderLeftColor = 'var(--delivery-color)'; routeDiv.style.backgroundColor = 'var(--delivery-bg)'; }
+            else if (checkedItems === totalItems && totalItems > 0) { routeDiv.style.borderLeftColor = 'var(--accent-color)'; routeDiv.style.backgroundColor = 'var(--success-bg)'; }
+
+            routeDiv.innerHTML = `
+                <div class="storage-route-header"><span>📍 ${route}</span> <span class="badge bg-slate-400 text-white px-2 py-0.5 rounded-full text-xs font-bold">${totalQty} und</span></div>
+                <div class="route-progress-lbl"><span>📦 Listos:</span><span>${checkedItems}/${totalItems} (${readyPercentage}%)</span></div>
+                <div class="route-progress-bar-container"><div class="route-progress-bar-fill" style="width: ${readyPercentage}%; background-color: var(--accent-color);"></div></div>
+                <div class="route-progress-lbl"><span>🚚 Entregados:</span><span style="color: #059669; font-weight: bold;">${deliveredItems}/${totalItems} (${deliveredPercentage}%)</span></div>
+                <div class="route-progress-bar-container"><div class="route-progress-bar-fill" style="width: ${deliveredPercentage}%; background-color: var(--delivery-color);"></div></div>
+            `;
+            var itemsList = document.createElement('ul');
+            itemsList.className = 'storage-items-list';
+            grouped[route].forEach(function(item) {
+                var statusIcon = '⏳';
+                if (item.returned) statusIcon = '🔄';
+                else if (item.delivered) statusIcon = '✅';
+                else if (item.checked) statusIcon = '📦';
+                var li = document.createElement('li');
+                li.className = 'storage-item-row';
+                li.innerHTML = `<span>${statusIcon} ${item.barcode}</span><span style="color: var(--text-muted);">${item.conductor} (${item.quantity})</span>`;
+                itemsList.appendChild(li);
+            });
+            routeDiv.appendChild(itemsList);
+            storageContainer.appendChild(routeDiv);
+        });
+    }
+
+    function renderReturnedList() {
+        var container = document.getElementById('returned-list');
+        container.innerHTML = '';
+        var returnedItems = inventory.filter(function(item) { return item.returned; });
+        if (returnedItems.length === 0) {
+            container.innerHTML = `<div style="color: var(--text-muted); font-style: italic; font-size: 12px; text-align: center; padding: 15px 0;">No hay devoluciones registradas en este lote.</div>`;
+            return;
+        }
+        returnedItems.forEach(function(item) {
+            var originalIndex = inventory.findIndex(function(x) { return x.barcode === item.barcode; });
+            var div = document.createElement('div');
+            div.style.padding = '12px'; div.style.borderRadius = '8px'; div.style.backgroundColor = 'var(--returned-bg)'; div.style.borderLeft = '4px solid var(--returned-color)'; div.style.fontSize = '12px';
+            var standardReasons = ["Dirección incorrecta o insuficiente", "Destinatario ausente", "Rechazado por el destinatario", "No responde al llamado", "Zona inaccesible / Peligrosa"];
+            var isStandard = standardReasons.includes(item.returnReason);
+            var selectValue = isStandard ? item.returnReason : (item.returnReason ? 'Otro' : 'Dirección incorrecta o insuficiente');
+            
+            div.innerHTML = `
+                <div style="display: flex; justify-content: space-between; font-weight: bold; color: #9a3412;"><span>📦 ${item.barcode}</span><span>Cant: ${item.quantity}</span></div>
+                <div style="color: #c2410c; font-size: 11px;">Ruta: <strong>${item.ruta}</strong> | Cond: <strong>${item.conductor}</strong> | Acta: <strong>${item.acta}</strong></div>
+                <div class="form-group" style="margin-top: 5px; margin-bottom: 4px;">
+                    <select class="form-control w-full p-1.5 border border-slate-300 rounded-lg text-xs bg-white" onchange="updateReturnReasonDropdown(${originalIndex}, this.value)">
+                        <option value="Dirección incorrecta o insuficiente" ${selectValue==='Dirección incorrecta o insuficiente'?'selected':''}>Dirección incorrecta o insuficiente</option>
+                        <option value="Destinatario ausente" ${selectValue==='Destinatario ausente'?'selected':''}>Destinatario ausente</option>
+                        <option value="Rechazado por el destinatario" ${selectValue==='Rechazado por el destinatario'?'selected':''}>Rechazado por el destinatario</option>
+                        <option value="No responde al llamado" ${selectValue==='No responde al llamado'?'selected':''}>No responde al llamado</option>
+                        <option value="Zona inaccesible / Peligrosa" ${selectValue==='Zona inaccesible / Peligrosa'?'selected':''}>Zona inaccesible / Peligrosa</option>
+                        <option value="Otro" ${selectValue==='Otro'?'selected':''}>Otro (Especificar)</option>
+                    </select>
+                </div>
+                <div id="left-custom-reason-grp-${originalIndex}" style="display: ${isStandard?'none':'block'};"><input type="text" class="form-control w-full p-1.5 border border-slate-300 rounded-lg text-xs" value="${isStandard?'':item.returnReason}" onblur="updateReturnReasonCustom(${originalIndex}, this.value)"></div>
+            `;
+            container.appendChild(div);
+        });
+    }
+
+    function updateStatsAndProgress() {
+        var uniqueCount = inventory.length, totalQuantity = 0, checkedCount = 0, deliveredCount = 0, returnedCount = 0, pendingCount = 0;
+        inventory.forEach(function(item) {
+            totalQuantity += item.quantity;
+            if (item.returned) returnedCount++;
+            else if (item.delivered) { deliveredCount++; checkedCount++; }
+            else if (item.checked) checkedCount++;
+            else pendingCount++;
+        });
+
+        statUnique.textContent = uniqueCount; statTotalQty.textContent = totalQuantity; statChecked.textContent = checkedCount; statDelivered.textContent = deliveredCount; statReturned.textContent = returnedCount;
+        countAll.textContent = uniqueCount; countPending.textContent = pendingCount; countChecked.textContent = checkedCount; countDelivered.textContent = deliveredCount; countReturned.textContent = returnedCount;
+
+        var readyPercentage = uniqueCount > 0 ? Math.round((checkedCount / uniqueCount) * 100) : 0;
+        progressFill.style.width = `${readyPercentage}%`; progressPercentage.textContent = `${readyPercentage}%`; progressStatusText.textContent = `${checkedCount} de ${uniqueCount} sobres preparados`;
+
+        var delivPercentage = uniqueCount > 0 ? Math.round((deliveredCount / uniqueCount) * 100) : 0;
+        progressDeliveryFill.style.width = `${delivPercentage}%`; progressDeliveryPercentage.textContent = `${delivPercentage}%`; progressDeliveryStatusText.textContent = `${deliveredCount} de ${uniqueCount} sobres entregados`;
+
+        updateFilterDropdowns(); renderStorage(); renderReturnedList();
+    }
+
+    function renderTable(filterText) {
+        if (filterText === undefined) filterText = '';
+        tableBody.innerHTML = '';
+        var query = filterText.toLowerCase().trim();
+        var filterCondValue = filterConductor.value;
+        var filterActaValue = filterActa.value;
+
+        if (inventory.length === 0) {
+            tableBody.innerHTML = `<tr><td colspan="9" class="empty-state text-center p-6 text-slate-400 italic">No hay sobres en el inventario. Escanee un código o importe un archivo CSV.</td></tr>`;
+            updateStatsAndProgress(); return;
+        }
+
+        var hasVisibleRows = false;
+        inventory.forEach(function(item, index) {
+            if (currentTab === 'pending' && (item.checked || item.returned || item.delivered)) return;
+            if (currentTab === 'checked' && (!item.checked || item.delivered || item.returned)) return;
+            if (currentTab === 'delivered' && !item.delivered) return;
+            if (currentTab === 'returned' && !item.returned) return;
+            if (filterCondValue && item.conductor !== filterCondValue) return;
+            if (filterActaValue && item.acta !== filterActaValue) return;
+
+            if (item.barcode.toLowerCase().includes(query) || (item.acta||'').toLowerCase().includes(query) || (item.conductor||'').toLowerCase().includes(query) || (item.ruta||'').toLowerCase().includes(query) || (item.receiverName||'').toLowerCase().includes(query)) {
+                hasVisibleRows = true;
+                var rowClass = item.returned ? 'row-returned' : (item.delivered ? 'row-delivered' : (item.checked ? 'row-checked' : ''));
+                var stateDetails = '';
+                if (item.returned && item.returnReason) stateDetails = `<div style="font-size:11px; color:#c2410c; margin-top:4px;">🔄 <strong>Devuelto:</strong> ${item.returnReason}</div>`;
+                else if (item.delivered) stateDetails = `<div style="font-size:11px; color:#047857; margin-top:4px;">✔️ <strong>Entregado el:</strong> ${item.statusDate}</div>`;
+                else if (item.checked && item.statusDate) stateDetails = `<div style="font-size:11px; color:#1e3a8a; margin-top:4px; opacity:0.8;">📦 <strong>Listo el:</strong> ${item.statusDate}</div>`;
+
+                var tr = document.createElement('tr');
+                tr.className = rowClass;
+                tr.innerHTML = `
+                    <td class="p-3 text-center"><div class="checkbox-container"><input type="checkbox" class="checkbox-custom w-4 h-4" ${item.checked?'checked':''} onchange="toggleCheck(${index})"></div></td>
+                    <td class="p-3 text-center"><div class="checkbox-container"><input type="checkbox" class="checkbox-custom checkbox-delivered w-4 h-4" ${item.delivered?'checked':''} onchange="toggleDelivered(${index})"></div></td>
+                    <td class="p-3 text-center"><div class="checkbox-container"><input type="checkbox" class="checkbox-custom checkbox-returned w-4 h-4" ${item.returned?'checked':''} onchange="toggleReturned(${index})"></div></td>
+                    <td class="p-3 font-mono font-bold text-slate-800 text-sm">${item.barcode}${stateDetails}</td>
+                    <td class="p-3"><div class="editable-cell text-xs" contenteditable="true" onblur="updateActaInTable(${index}, this.innerText)">${item.acta || 'Sin acta'}</div></td>
+                    <td class="p-3"><div class="editable-cell text-xs" contenteditable="true" onblur="updateConductorInTable(${index}, this.innerText)">${item.conductor || 'Sin conductor'}</div></td>
+                    <td class="p-3"><div class="editable-cell text-xs" contenteditable="true" onblur="updateRutaInTable(${index}, this.innerText)">${item.ruta || 'Sin ruta'}</div></td>
+                    <td class="p-3 text-center"><input type="number" class="input-qty-table text-xs p-1" min="1" value="${item.quantity}" onchange="updateQuantityInTable(${index}, this.value)"></td>
+                    <td class="p-3 text-center no-print"><button class="btn-delete text-red-500 hover:bg-red-50 px-2 py-1 rounded" onclick="deleteItem(${index})">Eliminar</button></td>
+                `;
+                tableBody.appendChild(tr);
+            }
+        });
+
+        if (!hasVisibleRows) tableBody.innerHTML = `<tr><td colspan="9" class="empty-state text-center p-6 text-slate-400 italic">No se encontraron resultados en esta búsqueda.</td></tr>`;
+        updateStatsAndProgress();
+    }
+
+    // Registro de funciones globales
+    window.toggleFormMode = toggleFormMode; 
+    window.processBulkAdd = processBulkAdd; 
+    window.startCameraScanner = startCameraScanner; 
+    window.stopCameraScanner = stopCameraScanner;
+    window.exportToCSV = exportToCSV; 
+    window.clearAllInventory = clearAllInventory; 
+    window.changeTab = changeTab; 
+    window.toggleCheck = toggleCheck;
+    window.toggleDelivered = toggleDelivered; 
+    window.toggleReturned = toggleReturned; 
+    window.updateActaInTable = updateActaInTable; 
+    window.updateConductorInTable = updateConductorInTable;
+    window.updateRutaInTable = updateRutaInTable; 
+    window.updateQuantityInTable = updateQuantityInTable; 
+    window.deleteItem = deleteItem; 
+    window.handleReturnReasonSelectChange = handleReturnReasonSelectChange; 
+    window.cancelReturnReason = cancelReturnReason;
+    window.confirmReturnReason = confirmReturnReason; 
+    window.updateReturnReasonDropdown = updateReturnReasonDropdown; 
+    window.updateReturnReasonCustom = updateReturnReasonCustom; 
+    window.changeChannel = changeChannel;
+</script>
+</body>
+</html>
